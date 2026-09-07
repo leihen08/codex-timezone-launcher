@@ -1,6 +1,10 @@
 use crate::timezone::validate_timezone;
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
+use windows_sys::Win32::Foundation::CloseHandle;
+use windows_sys::Win32::System::Threading::{
+    EVENT_MODIFY_STATE, OpenEventW, OpenThread, ResumeThread, SetEvent, THREAD_SUSPEND_RESUME,
+};
 
 pub const RESUME_EVENT_PREFIX: &str = r"Local\ChatGPTTimeZoneLauncher-";
 
@@ -51,10 +55,58 @@ where
     })
 }
 
+pub fn launch_store_package(
+    package_full_name: &str,
+    app_user_model_id: &str,
+    timezone: &str,
+) -> Result<(), String> {
+    crate::store_activation::activate(package_full_name, app_user_model_id, timezone)
+}
+
+pub fn run_resumer_if_requested() -> bool {
+    let Some(request) = parse_resume_request(std::env::args_os()) else {
+        return false;
+    };
+    let _ = resume_package_thread(&request);
+    true
+}
+
+pub fn resume_package_thread(request: &ResumeRequest) -> Result<(), String> {
+    if request.thread_id == 0 || !valid_event_name(&request.event_name) {
+        return Err("线程恢复请求无效。".into());
+    }
+    let event_name = wide(&request.event_name);
+    let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, event_name.as_ptr()) };
+    if event.is_null() {
+        return Err("无法打开启动握手事件。".into());
+    }
+    let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, request.thread_id) };
+    if thread.is_null() {
+        unsafe { CloseHandle(event) };
+        return Err("无法打开待恢复线程。".into());
+    }
+
+    let resumed = unsafe { ResumeThread(thread) } != u32::MAX;
+    let signaled = resumed && unsafe { SetEvent(event) } != 0;
+    unsafe {
+        CloseHandle(thread);
+        CloseHandle(event);
+    }
+    if resumed && signaled {
+        Ok(())
+    } else {
+        Err("无法恢复 Store 应用启动线程。".into())
+    }
+}
+
 fn valid_event_name(value: &str) -> bool {
     value.starts_with(RESUME_EVENT_PREFIX)
         && value.len() <= 128
         && value
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '\\' | '-'))
+}
+
+fn wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(Some(0)).collect()
 }

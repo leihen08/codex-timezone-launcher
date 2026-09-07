@@ -10,6 +10,7 @@ use windows_sys::Win32::System::Threading::{
     OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 
+use crate::discovery::ClientTarget;
 use crate::timezone::validate_timezone;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,6 +84,35 @@ pub fn launch_client(executable: &Path, timezone: &str) -> Result<Child, String>
     build_launch_command(executable, timezone)?
         .spawn()
         .map_err(|_| "无法启动 Codex 客户端。".into())
+}
+
+pub fn launch_client_target_with<DesktopLaunch, StoreLaunch>(
+    target: &ClientTarget,
+    timezone: &str,
+    desktop_launch: DesktopLaunch,
+    store_launch: StoreLaunch,
+) -> Result<(), String>
+where
+    DesktopLaunch: FnOnce(&Path, &str) -> Result<(), String>,
+    StoreLaunch: FnOnce(&str, &str, &str) -> Result<(), String>,
+{
+    match target {
+        ClientTarget::DesktopExecutable(executable) => desktop_launch(executable, timezone),
+        ClientTarget::StorePackage {
+            package_full_name,
+            app_user_model_id,
+            ..
+        } => store_launch(package_full_name, app_user_model_id, timezone),
+    }
+}
+
+pub fn launch_client_target(target: &ClientTarget, timezone: &str) -> Result<(), String> {
+    launch_client_target_with(
+        target,
+        timezone,
+        |path, timezone| launch_client(path, timezone).map(|_| ()),
+        crate::store_launch::launch_store_package,
+    )
 }
 
 fn query_process_path(process_id: u32) -> Option<PathBuf> {

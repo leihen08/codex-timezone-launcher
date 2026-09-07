@@ -2,13 +2,19 @@
 
 use chatgpt_timezone_launcher::{
     discovery::{ClientTarget, discover_client_target},
+    process::launch_client_target_with,
     store_launch::{
         RESUME_EVENT_PREFIX, build_debugger_command_line, build_timezone_environment,
-        parse_resume_request,
+        parse_resume_request, resume_package_thread,
     },
 };
 use std::ffi::OsString;
 use std::path::Path;
+use std::{cell::Cell, path::PathBuf};
+use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+use windows_sys::Win32::System::Threading::{
+    CreateEventW, GetCurrentThreadId, WaitForSingleObject,
+};
 
 #[test]
 fn installed_store_client_has_activation_metadata_not_just_internal_exe_path() {
@@ -77,4 +83,52 @@ fn package_environment_is_double_null_terminated_and_contains_only_timezone() {
     let expected: Vec<u16> = "TZ=Asia/Shanghai\0\0".encode_utf16().collect();
 
     assert_eq!(environment, expected);
+}
+
+#[test]
+fn store_target_dispatches_to_package_activation_not_direct_create_process() {
+    let direct_launch_called = Cell::new(false);
+    let package_activation_called = Cell::new(false);
+    let target = ClientTarget::StorePackage {
+        executable: PathBuf::from(r"C:\WindowsApps\OpenAI.Codex\app\ChatGPT.exe"),
+        package_full_name: "OpenAI.Codex_1.0.0.0_x64__publisher".into(),
+        app_user_model_id: "OpenAI.Codex_publisher!App".into(),
+    };
+
+    launch_client_target_with(
+        &target,
+        "Asia/Shanghai",
+        |_, _| {
+            direct_launch_called.set(true);
+            Ok(())
+        },
+        |_, _, _| {
+            package_activation_called.set(true);
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert!(!direct_launch_called.get());
+    assert!(package_activation_called.get());
+}
+
+#[test]
+fn resumer_opens_launcher_event_and_signals_after_thread_access() {
+    let thread_id = unsafe { GetCurrentThreadId() };
+    let event_name = format!(
+        "{RESUME_EVENT_PREFIX}test-{}-{thread_id}",
+        std::process::id()
+    );
+    let event_name_wide: Vec<u16> = event_name.encode_utf16().chain(Some(0)).collect();
+    let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, event_name_wide.as_ptr()) };
+    assert!(!event.is_null());
+
+    let request = chatgpt_timezone_launcher::store_launch::ResumeRequest {
+        thread_id,
+        event_name,
+    };
+    resume_package_thread(&request).unwrap();
+    assert_eq!(unsafe { WaitForSingleObject(event, 0) }, WAIT_OBJECT_0);
+    unsafe { CloseHandle(event) };
 }
