@@ -9,7 +9,6 @@
 
 当前版本：**v1.0.1**
 
-> 本项目是非官方社区工具，与 OpenAI 没有关联，也不代表 OpenAI。Codex、ChatGPT 和 OpenAI 是其各自权利人的商标。
 
 ![Codex Time Zone Launcher 界面](docs/assets/preview.png)
 
