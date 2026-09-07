@@ -3,6 +3,7 @@ use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use windows_sys::Win32::Foundation::{ERROR_SUCCESS, FILETIME};
+use windows_sys::Win32::Storage::Packaging::Appx::PackageFamilyNameFromFullName;
 use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ,
     RegCloseKey, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW,
@@ -12,6 +13,27 @@ const PACKAGE_REGISTRY_PATH: &str = concat!(
     "Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\",
     "AppModel\\Repository\\Packages"
 );
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClientTarget {
+    DesktopExecutable(PathBuf),
+    StorePackage {
+        executable: PathBuf,
+        package_full_name: String,
+        app_user_model_id: String,
+    },
+}
+
+impl ClientTarget {
+    pub fn executable(&self) -> &Path {
+        match self {
+            Self::DesktopExecutable(path)
+            | Self::StorePackage {
+                executable: path, ..
+            } => path,
+        }
+    }
+}
 
 pub fn select_first_existing(
     candidates: &[PathBuf],
@@ -43,13 +65,33 @@ pub fn package_executable_candidates(package_root: &Path) -> Vec<PathBuf> {
 }
 
 pub fn discover_client() -> Result<PathBuf, String> {
-    let mut candidates = Vec::new();
+    discover_client_target().map(|target| target.executable().to_path_buf())
+}
+
+pub fn discover_client_target() -> Result<ClientTarget, String> {
+    let store_targets = app_model_store_targets();
     if let Ok(processes) = running_processes() {
-        candidates.extend(processes.into_iter().filter_map(|process| process.path));
+        for running_path in processes.into_iter().filter_map(|process| process.path) {
+            if let Some(target) = store_targets
+                .iter()
+                .find(|target| paths_equal(target.executable(), &running_path))
+            {
+                return Ok(target.clone());
+            }
+            if running_path
+                .file_name()
+                .is_some_and(|name| name.eq_ignore_ascii_case("ChatGPT.exe"))
+                && valid_client_executable(&running_path)
+            {
+                return Ok(ClientTarget::DesktopExecutable(running_path));
+            }
+        }
     }
-    for package_root in app_model_package_roots() {
-        candidates.extend(package_executable_candidates(&package_root));
+    if let Some(target) = store_targets.into_iter().next() {
+        return Ok(target);
     }
+
+    let mut candidates = Vec::new();
     candidates.extend(app_paths_candidates());
 
     if let (Some(local), Some(programs)) = (
@@ -62,16 +104,12 @@ pub fn discover_client() -> Result<PathBuf, String> {
         ));
     }
 
-    select_first_existing(&candidates, |path| {
-        path.is_file()
-            && path.file_name().is_some_and(|name| {
-                name.eq_ignore_ascii_case("ChatGPT.exe") || name.eq_ignore_ascii_case("Codex.exe")
-            })
-    })
-    .ok_or_else(|| "未找到已安装的 Codex/ChatGPT Windows 客户端。".into())
+    select_first_existing(&candidates, valid_client_executable)
+        .map(ClientTarget::DesktopExecutable)
+        .ok_or_else(|| "未找到已安装的 Codex/ChatGPT Windows 客户端。".into())
 }
 
-fn app_model_package_roots() -> Vec<PathBuf> {
+fn app_model_store_targets() -> Vec<ClientTarget> {
     let mut package_key: HKEY = std::ptr::null_mut();
     let registry_path = wide(PACKAGE_REGISTRY_PATH);
     if unsafe {
@@ -87,7 +125,7 @@ fn app_model_package_roots() -> Vec<PathBuf> {
         return Vec::new();
     }
 
-    let mut roots = Vec::new();
+    let mut targets = Vec::new();
     for index in 0..4096 {
         let mut name = [0u16; 512];
         let mut name_length = name.len() as u32;
@@ -112,13 +150,65 @@ fn app_model_package_roots() -> Vec<PathBuf> {
         if (lower.starts_with("openai.codex_") || lower.starts_with("openai.chatgpt_"))
             && let Some(root) =
                 read_registry_string(package_key, Some(&package_name), "PackageRootFolder")
+            && let Some(family_name) = package_family_name(&package_name)
+            && let Some(executable) = select_first_existing(
+                &package_executable_candidates(Path::new(&root)),
+                valid_client_executable,
+            )
         {
-            roots.push(PathBuf::from(root));
+            targets.push(ClientTarget::StorePackage {
+                executable,
+                package_full_name: package_name,
+                app_user_model_id: format!("{family_name}!App"),
+            });
         }
     }
     unsafe { RegCloseKey(package_key) };
-    roots.reverse();
-    roots
+    targets.reverse();
+    targets
+}
+
+fn package_family_name(package_full_name: &str) -> Option<String> {
+    let package_full_name = wide(package_full_name);
+    let mut length = 0u32;
+    unsafe {
+        PackageFamilyNameFromFullName(
+            package_full_name.as_ptr(),
+            &mut length,
+            std::ptr::null_mut(),
+        )
+    };
+    if !(2..=256).contains(&length) {
+        return None;
+    }
+    let mut family_name = vec![0u16; length as usize];
+    if unsafe {
+        PackageFamilyNameFromFullName(
+            package_full_name.as_ptr(),
+            &mut length,
+            family_name.as_mut_ptr(),
+        )
+    } != ERROR_SUCCESS
+    {
+        return None;
+    }
+    let length = family_name
+        .iter()
+        .position(|character| *character == 0)
+        .unwrap_or(family_name.len());
+    Some(String::from_utf16_lossy(&family_name[..length]))
+}
+
+fn valid_client_executable(path: &Path) -> bool {
+    path.is_file()
+        && path.file_name().is_some_and(|name| {
+            name.eq_ignore_ascii_case("ChatGPT.exe") || name.eq_ignore_ascii_case("Codex.exe")
+        })
+}
+
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    left.to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy())
 }
 
 fn app_paths_candidates() -> Vec<PathBuf> {
