@@ -1,7 +1,9 @@
 use chatgpt_timezone_launcher::{
     config::{Settings, decode_settings, encode_settings},
     discovery::select_first_existing,
-    geo::{IP_SERVICE_URL, parse_timezone_response, timezone_from_http_response},
+    geo::{
+        IP_SERVICE_URL, network_error_message, parse_timezone_response, timezone_from_http_response,
+    },
     process::should_block_for_process,
     timezone::validate_timezone,
 };
@@ -36,6 +38,25 @@ fn settings_json_round_trips_the_remembered_timezone() {
 fn invalid_timezone_in_settings_is_rejected() {
     let json = br#"{"timezone":"not/a-zone"}"#;
     assert!(decode_settings(json).is_err());
+}
+
+#[test]
+fn legacy_settings_remembered_timezone_is_migrated_without_restart_policy() {
+    let json = br#"{
+        "Mode":"Offset",
+        "TimeZoneName":"America/Los_Angeles",
+        "UtcOffsetMinutes":420,
+        "RestartIfRunning":true
+    }"#;
+
+    let decoded = decode_settings(json).unwrap();
+    assert_eq!(decoded.timezone, "America/Los_Angeles");
+}
+
+#[test]
+fn utf8_bom_settings_are_accepted_for_windows_compatibility() {
+    let json = b"\xEF\xBB\xBF{\"timezone\":\"Asia/Tokyo\"}";
+    assert_eq!(decode_settings(json).unwrap().timezone, "Asia/Tokyo");
 }
 
 #[test]
@@ -108,4 +129,14 @@ fn ip_http_failures_do_not_get_parsed_as_success() {
             .unwrap_err()
             .contains("HTTP")
     );
+}
+
+#[test]
+fn ip_timeout_and_offline_errors_have_distinct_actionable_messages() {
+    use windows_sys::Win32::Networking::WinHttp::{
+        ERROR_WINHTTP_CANNOT_CONNECT, ERROR_WINHTTP_TIMEOUT,
+    };
+
+    assert!(network_error_message(ERROR_WINHTTP_TIMEOUT, "接收").contains("超时"));
+    assert!(network_error_message(ERROR_WINHTTP_CANNOT_CONNECT, "连接").contains("检查网络"));
 }

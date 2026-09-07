@@ -169,6 +169,10 @@ fn read_response(request: *mut c_void) -> Result<Vec<u8>, String> {
 
 fn network_error(action: &str) -> String {
     let code = unsafe { GetLastError() };
+    network_error_message(code, action)
+}
+
+pub fn network_error_message(code: u32, action: &str) -> String {
     if code == ERROR_WINHTTP_TIMEOUT {
         "定位请求超时，请检查网络后重试。".into()
     } else if code == ERROR_WINHTTP_CANNOT_CONNECT || code == ERROR_WINHTTP_NAME_NOT_RESOLVED {

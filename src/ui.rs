@@ -1,6 +1,6 @@
 use std::ptr::{null, null_mut};
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{COLOR_WINDOW, GetSysColorBrush, UpdateWindow};
+use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::{COLOR_WINDOW, GetSysColorBrush, HDC, UpdateWindow};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::{
     ICC_STANDARD_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
@@ -10,11 +10,14 @@ use windows_sys::Win32::UI::HiDpi::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AdjustWindowRectEx, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
-    DispatchMessageW, GetMessageW, IDC_ARROW, IDI_APPLICATION, IsDialogMessageW, LoadCursorW,
-    LoadIconW, MB_ICONERROR, MB_OK, MSG, MessageBoxW, PostQuitMessage, RegisterClassW, SW_SHOW,
-    ShowWindow, TranslateMessage, WM_DESTROY, WNDCLASSW, WS_CAPTION, WS_CLIPCHILDREN,
-    WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU,
+    DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, IDC_ARROW, IDI_APPLICATION,
+    IsDialogMessageW, LoadCursorW, LoadIconW, MB_ICONERROR, MB_OK, MSG, MessageBoxW,
+    PostQuitMessage, RegisterClassW, SW_SHOW, SetWindowLongPtrW, ShowWindow, TranslateMessage,
+    WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_NCDESTROY, WNDCLASSW, WS_CAPTION,
+    WS_CLIPCHILDREN, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU,
 };
+
+use crate::ui_app::{AppState, WM_GEO_RESULT};
 
 const WINDOW_CLASS: &str = "ChatGPTTimeZoneLauncherWindow";
 const WINDOW_TITLE: &str = "Codex 时区启动器";
@@ -121,11 +124,79 @@ unsafe extern "system" fn window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if message == WM_DESTROY {
-        unsafe { PostQuitMessage(0) };
-        return 0;
+    match message {
+        WM_CREATE => {
+            let instance = unsafe { GetModuleHandleW(null()) } as HINSTANCE;
+            match AppState::create(window, instance) {
+                Ok(state) => {
+                    unsafe {
+                        SetWindowLongPtrW(
+                            window,
+                            GWLP_USERDATA,
+                            Box::into_raw(Box::new(state)) as isize,
+                        )
+                    };
+                    return 0;
+                }
+                Err(message) => {
+                    show_owned_error(window, &message);
+                    return -1;
+                }
+            }
+        }
+        WM_COMMAND => {
+            if let Some(state) = unsafe { state_mut(window) } {
+                let control_id = (wparam & 0xffff) as i32;
+                let notification = ((wparam >> 16) & 0xffff) as u32;
+                state.handle_command(window, control_id, notification);
+                return 0;
+            }
+        }
+        WM_GEO_RESULT => {
+            if let Some(state) = unsafe { state_mut(window) } {
+                state.handle_geo_result(window);
+                return 0;
+            }
+        }
+        WM_CTLCOLORSTATIC => {
+            if let Some(state) = unsafe { state_mut(window) } {
+                return state.static_brush(lparam as HWND, wparam as HDC) as LRESULT;
+            }
+        }
+        WM_DESTROY => {
+            unsafe { PostQuitMessage(0) };
+            return 0;
+        }
+        WM_NCDESTROY => {
+            let pointer = unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as *mut AppState;
+            if !pointer.is_null() {
+                unsafe {
+                    SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+                    drop(Box::from_raw(pointer));
+                }
+            }
+        }
+        _ => {}
     }
     unsafe { DefWindowProcW(window, message, wparam, lparam) }
+}
+
+unsafe fn state_mut(window: HWND) -> Option<&'static mut AppState> {
+    let pointer = unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as *mut AppState;
+    unsafe { pointer.as_mut() }
+}
+
+fn show_owned_error(window: HWND, message: &str) {
+    let message = wide(message);
+    let title = wide(WINDOW_TITLE);
+    unsafe {
+        MessageBoxW(
+            window,
+            message.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        )
+    };
 }
 
 fn wide(value: &str) -> Vec<u16> {

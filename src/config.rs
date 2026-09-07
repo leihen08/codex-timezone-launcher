@@ -17,6 +17,12 @@ pub struct Settings {
     pub timezone: String,
 }
 
+#[derive(Deserialize)]
+struct LegacySettings {
+    #[serde(rename = "TimeZoneName")]
+    time_zone_name: String,
+}
+
 impl Settings {
     pub fn new(timezone: &str) -> Result<Self, String> {
         Ok(Self {
@@ -33,9 +39,14 @@ pub fn decode_settings(bytes: &[u8]) -> Result<Settings, String> {
     if bytes.len() > 16 * 1024 {
         return Err("设置文件异常过大。".into());
     }
-    let decoded: Settings =
-        serde_json::from_slice(bytes).map_err(|_| "设置文件格式无效。".to_string())?;
-    Settings::new(&decoded.timezone)
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    let timezone = match serde_json::from_slice::<Settings>(bytes) {
+        Ok(settings) => settings.timezone,
+        Err(_) => serde_json::from_slice::<LegacySettings>(bytes)
+            .map(|settings| settings.time_zone_name)
+            .map_err(|_| "设置文件格式无效。".to_string())?,
+    };
+    Settings::new(&timezone)
 }
 
 pub fn settings_path_from_local_app_data(local_app_data: &Path) -> PathBuf {
