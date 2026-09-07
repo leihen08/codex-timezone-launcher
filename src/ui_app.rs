@@ -2,10 +2,8 @@ use crate::config::{Settings, load_settings, save_settings};
 use crate::discovery::discover_client;
 use crate::geo::lookup_timezone;
 use crate::timezone::{DEFAULT_TIMEZONE, all_timezones};
-use crate::ui_controls::{
-    IDC_LOCATE, IDC_SAVE, IDC_SAVE_LAUNCH, STATUS_ERROR, STATUS_INFO, STATUS_SUCCESS,
-    STATUS_WARNING, UiControls,
-};
+use crate::ui_controls::{STATUS_ERROR, STATUS_INFO, STATUS_SUCCESS, STATUS_WARNING, UiControls};
+use crate::ui_layout::{IDC_LOCATE, IDC_SAVE, IDC_SAVE_LAUNCH};
 use crate::workflow::{SaveLaunchOutcome, save_and_launch};
 use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND};

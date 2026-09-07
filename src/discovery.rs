@@ -159,8 +159,7 @@ fn read_registry_string(root: HKEY, subkey: Option<&str>, value: &str) -> Option
             &mut bytes,
         )
     } != ERROR_SUCCESS
-        || bytes < 2
-        || bytes > 32_768
+        || !(2..=32_768).contains(&bytes)
     {
         return None;
     }

@@ -145,22 +145,25 @@ unsafe extern "system" fn window_proc(
             }
         }
         WM_COMMAND => {
-            if let Some(state) = unsafe { state_mut(window) } {
+            let state = unsafe { state_pointer(window) };
+            if !state.is_null() {
                 let control_id = (wparam & 0xffff) as i32;
                 let notification = ((wparam >> 16) & 0xffff) as u32;
-                state.handle_command(window, control_id, notification);
+                unsafe { (*state).handle_command(window, control_id, notification) };
                 return 0;
             }
         }
         WM_GEO_RESULT => {
-            if let Some(state) = unsafe { state_mut(window) } {
-                state.handle_geo_result(window);
+            let state = unsafe { state_pointer(window) };
+            if !state.is_null() {
+                unsafe { (*state).handle_geo_result(window) };
                 return 0;
             }
         }
         WM_CTLCOLORSTATIC => {
-            if let Some(state) = unsafe { state_mut(window) } {
-                return state.static_brush(lparam as HWND, wparam as HDC) as LRESULT;
+            let state = unsafe { state_pointer(window) };
+            if !state.is_null() {
+                return unsafe { (*state).static_brush(lparam as HWND, wparam as HDC) } as LRESULT;
             }
         }
         WM_DESTROY => {
@@ -181,9 +184,8 @@ unsafe extern "system" fn window_proc(
     unsafe { DefWindowProcW(window, message, wparam, lparam) }
 }
 
-unsafe fn state_mut(window: HWND) -> Option<&'static mut AppState> {
-    let pointer = unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as *mut AppState;
-    unsafe { pointer.as_mut() }
+unsafe fn state_pointer(window: HWND) -> *mut AppState {
+    unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) as *mut AppState }
 }
 
 fn show_owned_error(window: HWND, message: &str) {

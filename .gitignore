@@ -1,5 +1,4 @@
 /target/
 /work/
-/outputs/*.pdb
+/outputs/*
 *.tmp
-
