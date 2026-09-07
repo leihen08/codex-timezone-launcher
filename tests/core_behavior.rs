@@ -1,7 +1,7 @@
 use chatgpt_timezone_launcher::{
     config::{Settings, decode_settings, encode_settings},
     discovery::select_first_existing,
-    geo::parse_timezone_response,
+    geo::{IP_SERVICE_URL, parse_timezone_response, timezone_from_http_response},
     process::should_block_for_process,
     timezone::validate_timezone,
 };
@@ -87,5 +87,25 @@ fn ip_service_error_and_invalid_timezone_are_clear_failures() {
         parse_timezone_response(invalid_zone)
             .unwrap_err()
             .contains("时区")
+    );
+}
+
+#[test]
+fn ip_lookup_uses_one_fixed_https_endpoint() {
+    assert_eq!(IP_SERVICE_URL, "https://ipapi.co/json/");
+}
+
+#[test]
+fn ip_http_failures_do_not_get_parsed_as_success() {
+    let body = br#"{"timezone":"Asia/Shanghai"}"#;
+
+    assert_eq!(
+        timezone_from_http_response(200, body).unwrap(),
+        "Asia/Shanghai"
+    );
+    assert!(
+        timezone_from_http_response(503, body)
+            .unwrap_err()
+            .contains("HTTP")
     );
 }
