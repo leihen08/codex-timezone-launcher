@@ -15,13 +15,16 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 pub const WM_GEO_RESULT: u32 = WM_APP + 1;
+pub const WM_LAUNCH_RESULT: u32 = WM_APP + 2;
 pub const TIMEZONE_SEARCH_TIMER: usize = 1;
 static GEO_RESULT: Mutex<Option<Result<String, String>>> = Mutex::new(None);
+static LAUNCH_RESULT: Mutex<Option<Result<SaveLaunchOutcome, String>>> = Mutex::new(None);
 
 pub struct AppState {
     zones: Vec<String>,
     controls: UiControls,
     filtering_timezones: bool,
+    launch_in_progress: bool,
 }
 
 impl AppState {
@@ -54,6 +57,7 @@ impl AppState {
             zones,
             controls,
             filtering_timezones: false,
+            launch_in_progress: false,
         })
     }
 
@@ -73,7 +77,7 @@ impl AppState {
         match control_id {
             IDC_LOCATE => self.start_geo_lookup(window),
             IDC_SAVE => self.save_selected(window),
-            IDC_SAVE_LAUNCH => self.save_and_launch_selected(window),
+            IDC_SAVE_LAUNCH => self.start_launch(window),
             _ => {}
         }
     }
@@ -111,6 +115,51 @@ impl AppState {
         }
     }
 
+    pub fn handle_launch_result(&mut self, window: HWND) {
+        self.launch_in_progress = false;
+        unsafe { EnableWindow(self.controls.save_launch, 1) };
+        let result = LAUNCH_RESULT.lock().ok().and_then(|mut slot| slot.take());
+        match result {
+            Some(Ok(SaveLaunchOutcome::AlreadyRunning(_))) => {
+                let message = concat!(
+                    "检测到 Codex/ChatGPT 客户端正在运行。\r\n\r\n",
+                    "时区只会在进程启动时读取。请先在客户端中保存未完成内容，",
+                    "然后自行退出客户端，再回到这里点击“保存并启动 Codex”。\r\n\r\n",
+                    "为避免数据丢失，本启动器绝不会强制结束任何进程。"
+                );
+                self.controls.set_status(
+                    "设置已保存；请保存客户端内容并自行退出后再启动。",
+                    STATUS_WARNING,
+                );
+                show_message(window, message, MB_ICONWARNING);
+            }
+            Some(Ok(SaveLaunchOutcome::Launched(_))) => {
+                self.controls
+                    .set_status("Codex 已使用所选时区启动。", STATUS_SUCCESS);
+                show_message(
+                    window,
+                    "Codex 已启动；Windows 系统时区没有改变。",
+                    MB_ICONINFORMATION,
+                );
+            }
+            Some(Err(message)) => self.report_error(window, &message),
+            None => self.report_error(window, "未能取得启动结果，请重试。"),
+        }
+    }
+
+    pub fn can_close(&self, window: HWND) -> bool {
+        if self.launch_in_progress {
+            show_message(
+                window,
+                "正在完成 Store 应用启动与临时设置清理，请稍候。",
+                MB_ICONINFORMATION,
+            );
+            false
+        } else {
+            true
+        }
+    }
+
     fn selected_timezone(&self) -> Result<String, String> {
         self.controls.timezone_text()
     }
@@ -129,7 +178,7 @@ impl AppState {
         }
     }
 
-    fn save_and_launch_selected(&mut self, window: HWND) {
+    fn start_launch(&mut self, window: HWND) {
         let timezone = match self.selected_timezone() {
             Ok(timezone) => timezone,
             Err(message) => {
@@ -137,30 +186,27 @@ impl AppState {
                 return;
             }
         };
-        match save_and_launch(&timezone) {
-            Ok(SaveLaunchOutcome::AlreadyRunning(_)) => {
-                let message = concat!(
-                    "检测到 Codex/ChatGPT 客户端正在运行。\r\n\r\n",
-                    "时区只会在进程启动时读取。请先在客户端中保存未完成内容，",
-                    "然后自行退出客户端，再回到这里点击“保存并启动 Codex”。\r\n\r\n",
-                    "为避免数据丢失，本启动器绝不会强制结束任何进程。"
-                );
-                self.controls.set_status(
-                    "设置已保存；请保存客户端内容并自行退出后再启动。",
-                    STATUS_WARNING,
-                );
-                show_message(window, message, MB_ICONWARNING);
-            }
-            Ok(SaveLaunchOutcome::Launched(_)) => {
-                self.controls
-                    .set_status(&format!("已使用 {timezone} 启动 Codex。"), STATUS_SUCCESS);
-                show_message(
-                    window,
-                    "Codex 已启动；Windows 系统时区没有改变。",
-                    MB_ICONINFORMATION,
-                );
-            }
-            Err(message) => self.report_error(window, &message),
+        if let Ok(mut slot) = LAUNCH_RESULT.lock() {
+            *slot = None;
+        }
+        self.launch_in_progress = true;
+        unsafe { EnableWindow(self.controls.save_launch, 0) };
+        self.controls
+            .set_status("正在保存设置并启动 Codex…", STATUS_INFO);
+        let target = window as usize;
+        let spawned = std::thread::Builder::new()
+            .name("codex-store-launch".into())
+            .spawn(move || {
+                let result = save_and_launch(&timezone);
+                if let Ok(mut slot) = LAUNCH_RESULT.lock() {
+                    *slot = Some(result);
+                }
+                unsafe { PostMessageW(target as HWND, WM_LAUNCH_RESULT, 0, 0) };
+            });
+        if spawned.is_err() {
+            self.launch_in_progress = false;
+            unsafe { EnableWindow(self.controls.save_launch, 1) };
+            self.report_error(window, "无法启动后台启动任务，请重试。");
         }
     }
 

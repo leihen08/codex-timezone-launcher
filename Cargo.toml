@@ -1,6 +1,6 @@
 [package]
 name = "chatgpt-timezone-launcher"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "A native Windows launcher that gives Codex a process-local IANA time zone"
 license = "MIT"

@@ -10,14 +10,15 @@ use windows_sys::Win32::UI::HiDpi::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AdjustWindowRectEx, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
-    DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, IDC_ARROW, IDI_APPLICATION,
-    IsDialogMessageW, LoadCursorW, LoadIconW, MB_ICONERROR, MB_OK, MSG, MessageBoxW,
-    PostQuitMessage, RegisterClassW, SW_SHOW, SetWindowLongPtrW, ShowWindow, TranslateMessage,
-    WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_NCDESTROY, WM_TIMER, WNDCLASSW,
-    WS_CAPTION, WS_CLIPCHILDREN, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU,
+    DispatchMessageW, FindWindowW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, IDC_ARROW,
+    IDI_APPLICATION, IsDialogMessageW, LoadCursorW, LoadIconW, MB_ICONERROR, MB_OK, MSG,
+    MessageBoxW, PostQuitMessage, RegisterClassW, SW_RESTORE, SW_SHOW, SetForegroundWindow,
+    SetWindowLongPtrW, ShowWindow, TranslateMessage, WM_CLOSE, WM_COMMAND, WM_CREATE,
+    WM_CTLCOLORSTATIC, WM_DESTROY, WM_NCDESTROY, WM_TIMER, WNDCLASSW, WS_CAPTION, WS_CLIPCHILDREN,
+    WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU,
 };
 
-use crate::ui_app::{AppState, WM_GEO_RESULT};
+use crate::ui_app::{AppState, WM_GEO_RESULT, WM_LAUNCH_RESULT};
 
 const WINDOW_CLASS: &str = "ChatGPTTimeZoneLauncherWindow";
 const WINDOW_TITLE: &str = "Codex 时区启动器";
@@ -118,6 +119,18 @@ pub fn show_fatal(message: &str) {
     }
 }
 
+pub fn focus_existing_window() {
+    let class_name = wide(WINDOW_CLASS);
+    let title = wide(WINDOW_TITLE);
+    let window = unsafe { FindWindowW(class_name.as_ptr(), title.as_ptr()) };
+    if !window.is_null() {
+        unsafe {
+            ShowWindow(window, SW_RESTORE);
+            SetForegroundWindow(window);
+        }
+    }
+}
+
 unsafe extern "system" fn window_proc(
     window: HWND,
     message: u32,
@@ -160,6 +173,13 @@ unsafe extern "system" fn window_proc(
                 return 0;
             }
         }
+        WM_LAUNCH_RESULT => {
+            let state = unsafe { state_pointer(window) };
+            if !state.is_null() {
+                unsafe { (*state).handle_launch_result(window) };
+                return 0;
+            }
+        }
         WM_TIMER => {
             let state = unsafe { state_pointer(window) };
             if !state.is_null() {
@@ -171,6 +191,12 @@ unsafe extern "system" fn window_proc(
             let state = unsafe { state_pointer(window) };
             if !state.is_null() {
                 return unsafe { (*state).static_brush(lparam as HWND, wparam as HDC) } as LRESULT;
+            }
+        }
+        WM_CLOSE => {
+            let state = unsafe { state_pointer(window) };
+            if !state.is_null() && !unsafe { (*state).can_close(window) } {
+                return 0;
             }
         }
         WM_DESTROY => {

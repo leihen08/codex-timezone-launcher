@@ -60,6 +60,7 @@ impl Drop for FontSet {
 pub struct Layout {
     pub timezone: HWND,
     pub locate: HWND,
+    pub save_launch: HWND,
     pub status: HWND,
     pub fonts: FontSet,
 }
@@ -131,44 +132,44 @@ pub fn create_layout(
     )?;
     let help = factory.create(
         "STATIC",
-        "可输入 shanghai、new_york 等关键字搜索完整 IANA 时区。自动定位只访问固定 HTTPS 服务，且不保存 IP。",
+        "可输入 shanghai、new_york 等关键字搜索完整 IANA 时区。\r\n自动定位只访问固定 HTTPS 服务，且不保存 IP。",
         WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
-        (150, 233, 576, 40),
+        (150, 233, 576, 48),
         IDC_HELP,
     )?;
     let divider = factory.create(
         "STATIC",
         "",
         WS_CHILD | WS_VISIBLE | WS_BORDER,
-        (34, 282, 692, 1),
+        (34, 296, 692, 1),
         0,
     )?;
     let client_label = factory.create(
         "STATIC",
         "客户端",
         WS_CHILD | WS_VISIBLE,
-        (34, 306, 102, 26),
+        (34, 314, 102, 26),
         0,
     )?;
     let client_path = factory.create(
         "STATIC",
         client_text,
         WS_CHILD | WS_VISIBLE | SS_NOPREFIX | SS_PATHELLIPSIS,
-        (150, 306, 576, 26),
+        (150, 314, 576, 26),
         IDC_CLIENT_PATH,
     )?;
     let status = factory.create(
         "STATIC",
         initial_status,
         WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
-        (34, 347, 692, 38),
+        (34, 354, 692, 38),
         IDC_STATUS,
     )?;
     let footnote = factory.create(
         "STATIC",
         "适用于使用运行时默认时区的 ChatGPT/Electron 显示与逻辑；极少数直接调用 Windows 原生时区 API 的功能仍可能使用系统时区。",
         WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
-        (34, 393, 692, 42),
+        (34, 400, 692, 42),
         IDC_FOOTNOTE,
     )?;
     let save = factory.create(
@@ -210,6 +211,7 @@ pub fn create_layout(
     Ok(Layout {
         timezone,
         locate,
+        save_launch,
         status,
         fonts,
     })

@@ -6,10 +6,12 @@
 
 1. 关闭正在运行的 Codex/ChatGPT 客户端；请先保存未完成内容。
 2. 运行 `outputs\CodexTimeZoneLauncher.exe`。
-3. 选择 IANA 时区，或点击“自动定位”。
+3. 在时区框中输入 `shanghai`、`new_york` 等关键字搜索并选择 IANA 时区，或点击“自动定位”。
 4. 点击“保存并启动 Codex”。选择会保存到固定位置：
 
    `%LOCALAPPDATA%\ChatGPTTimeZoneLauncher\settings.json`
+
+启动器在整台电脑范围内只允许一个交互式实例。重复打开时，新进程会立即退出并尝试唤回已有窗口，不会出现两个窗口同时修改或启动的情况。
 
 如果检测到客户端仍在运行，启动器会提示自行退出，但绝不会强制结束进程。时区环境变量是在进程启动时读取的，所以已经运行的客户端不会即时切换。
 
@@ -27,7 +29,11 @@
 
 发现顺序包括：正在运行的桌面客户端路径、当前用户的 AppModel 包注册（Microsoft Store 版）、Windows App Paths，以及常见的用户级和机器级安装目录。仅接受实际存在且文件名为 `ChatGPT.exe` 或 `Codex.exe` 的目标。
 
-启动使用 Rust `std::process::Command`（底层 Windows 进程 API）和独立环境映射，不拼接或执行 shell 命令。对于 `Codex.exe`，运行检测还要求路径与目标一致，从而避免把 Codex CLI 误判成桌面客户端。
+普通安装版使用 Rust `std::process::Command`（底层 Windows 进程 API）和独立环境映射，不拼接或执行 shell 命令。对于 `Codex.exe`，运行检测还要求路径与目标一致，从而避免把 Codex CLI 误判成桌面客户端。
+
+Microsoft Store 版不能直接执行 `WindowsApps` 内部 EXE，且普通 AUMID 激活不会传递每次启动的环境变量。启动器因此短暂使用 Windows `IPackageDebugSettings` 注入 `TZ`，以自身隐藏恢复模式恢复 Windows 暂停的启动线程，再立即撤销调试设置。该流程不挂起或终止任何现有进程；目标客户端已运行时不会进入这条路径。
+
+隐藏的 Store 线程恢复模式会在获取交互式单实例锁之前完成，因此不会被单实例限制误拦截，也不会创建第二个界面。
 
 ## 自动定位与隐私
 
@@ -74,13 +80,15 @@ cargo test --locked
 cargo build --release --locked
 ```
 
-测试覆盖时区校验、设置记忆和旧格式迁移、固定设置路径、进程运行提示决策、CLI 误报规避、安装路径发现、子进程环境隔离、IP 响应解析及离线/超时错误映射。本机联调还会验证 Store 版客户端真实发现和当前运行实例检测。
+测试覆盖时区搜索与校验、设置记忆和旧格式迁移、固定设置路径、单实例锁、进程运行提示决策、CLI 误报规避、强类型安装路径发现、普通子进程环境隔离、Store 环境块/激活分发/线程恢复握手、IP 响应解析及离线/超时错误映射。本机联调还会验证 Store 版客户端真实发现、当前运行实例检测和重复启动退出行为。
 
 ## 结构
 
 - `src/config.rs`：固定路径设置与原子写入。
 - `src/discovery.rs`：客户端路径发现。
 - `src/process.rs`：运行检测与无 shell 启动。
+- `src/single_instance.rs`：系统级单实例锁。
+- `src/store_activation.rs`、`src/store_launch.rs`：Store 包环境激活与线程恢复握手。
 - `src/geo.rs`：固定 HTTPS 定位。
 - `src/workflow.rs`：可测试的保存/启动顺序。
 - `src/ui*.rs`：DPI 感知 Win32 界面与事件处理。

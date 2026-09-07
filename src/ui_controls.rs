@@ -27,6 +27,7 @@ pub const STATUS_ERROR: COLORREF = rgb(185, 45, 45);
 pub struct UiControls {
     pub timezone: HWND,
     pub locate: HWND,
+    pub save_launch: HWND,
     timezone_edit: HWND,
     status: HWND,
     _fonts: FontSet,
@@ -74,6 +75,7 @@ impl UiControls {
         Ok(Self {
             timezone: layout.timezone,
             locate: layout.locate,
+            save_launch: layout.save_launch,
             timezone_edit: combo_info.hwndItem,
             status: layout.status,
             _fonts: layout.fonts,
@@ -105,12 +107,12 @@ impl UiControls {
             unsafe { SendMessageW(self.timezone, CB_ADDSTRING, 0, timezone.as_ptr() as isize) };
         }
         let query_text = wide(query);
-        unsafe { SetWindowTextW(self.timezone_edit, query_text.as_ptr()) };
         let cursor = query.encode_utf16().count().min(64);
         let selection = ((cursor as isize) << 16) | cursor as isize;
         unsafe {
-            SendMessageW(self.timezone, CB_SETEDITSEL, 0, selection);
             SendMessageW(self.timezone, CB_SHOWDROPDOWN, 1, 0);
+            SetWindowTextW(self.timezone_edit, query_text.as_ptr());
+            SendMessageW(self.timezone, CB_SETEDITSEL, 0, selection);
         }
     }
 
