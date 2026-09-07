@@ -1,25 +1,27 @@
 use crate::config::{Settings, load_settings, save_settings};
 use crate::discovery::discover_client;
 use crate::geo::lookup_timezone;
-use crate::timezone::{DEFAULT_TIMEZONE, all_timezones};
+use crate::timezone::{DEFAULT_TIMEZONE, all_timezones, matching_timezones};
 use crate::ui_controls::{STATUS_ERROR, STATUS_INFO, STATUS_SUCCESS, STATUS_WARNING, UiControls};
-use crate::ui_layout::{IDC_LOCATE, IDC_SAVE, IDC_SAVE_LAUNCH};
+use crate::ui_layout::{IDC_LOCATE, IDC_SAVE, IDC_SAVE_LAUNCH, IDC_TIMEZONE};
 use crate::workflow::{SaveLaunchOutcome, save_and_launch};
 use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND};
 use windows_sys::Win32::Graphics::Gdi::{HBRUSH, HDC};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BN_CLICKED, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MessageBoxW, PostMessageW,
-    WM_APP,
+    BN_CLICKED, CBN_EDITCHANGE, KillTimer, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK,
+    MessageBoxW, PostMessageW, SetTimer, WM_APP,
 };
 
 pub const WM_GEO_RESULT: u32 = WM_APP + 1;
+pub const TIMEZONE_SEARCH_TIMER: usize = 1;
 static GEO_RESULT: Mutex<Option<Result<String, String>>> = Mutex::new(None);
 
 pub struct AppState {
     zones: Vec<String>,
     controls: UiControls,
+    filtering_timezones: bool,
 }
 
 impl AppState {
@@ -48,10 +50,23 @@ impl AppState {
             &client_text,
             &initial_status,
         )?;
-        Ok(Self { zones, controls })
+        Ok(Self {
+            zones,
+            controls,
+            filtering_timezones: false,
+        })
     }
 
     pub fn handle_command(&mut self, window: HWND, control_id: i32, notification: u32) {
+        if control_id == IDC_TIMEZONE && notification == CBN_EDITCHANGE {
+            if !self.filtering_timezones {
+                unsafe {
+                    KillTimer(window, TIMEZONE_SEARCH_TIMER);
+                    SetTimer(window, TIMEZONE_SEARCH_TIMER, 250, None);
+                }
+            }
+            return;
+        }
         if notification != BN_CLICKED {
             return;
         }
@@ -69,7 +84,9 @@ impl AppState {
         match result {
             Some(Ok(timezone)) => {
                 if let Some(index) = self.zones.iter().position(|zone| zone == &timezone) {
-                    self.controls.select_index(index);
+                    self.filtering_timezones = true;
+                    self.controls.select_timezone(&self.zones, index);
+                    self.filtering_timezones = false;
                     self.controls.set_status(
                         &format!("已定位为 {timezone}。IP 未保存；请保存或直接启动。"),
                         STATUS_SUCCESS,
@@ -87,18 +104,21 @@ impl AppState {
         self.controls.static_brush(control, device)
     }
 
-    fn selected_timezone(&self) -> Result<&str, String> {
-        self.controls
-            .selected_index()
-            .and_then(|index| self.zones.get(index))
-            .map(String::as_str)
-            .ok_or_else(|| "请选择一个有效时区。".into())
+    pub fn handle_timer(&mut self, window: HWND, timer_id: usize) {
+        if timer_id == TIMEZONE_SEARCH_TIMER {
+            unsafe { KillTimer(window, TIMEZONE_SEARCH_TIMER) };
+            self.filter_timezone_list();
+        }
+    }
+
+    fn selected_timezone(&self) -> Result<String, String> {
+        self.controls.timezone_text()
     }
 
     fn save_selected(&mut self, window: HWND) {
         let result = self
             .selected_timezone()
-            .and_then(Settings::new)
+            .and_then(|timezone| Settings::new(&timezone))
             .and_then(|settings| save_settings(&settings).map(|_| settings.timezone));
         match result {
             Ok(timezone) => self.controls.set_status(
@@ -111,7 +131,7 @@ impl AppState {
 
     fn save_and_launch_selected(&mut self, window: HWND) {
         let timezone = match self.selected_timezone() {
-            Ok(timezone) => timezone.to_string(),
+            Ok(timezone) => timezone,
             Err(message) => {
                 self.report_error(window, &message);
                 return;
@@ -165,6 +185,19 @@ impl AppState {
             unsafe { EnableWindow(self.controls.locate, 1) };
             self.report_error(window, "无法启动定位任务，请稍后重试。");
         }
+    }
+
+    fn filter_timezone_list(&mut self) {
+        if self.filtering_timezones {
+            return;
+        }
+        let Ok(query) = self.controls.timezone_text() else {
+            return;
+        };
+        let matches = matching_timezones(&self.zones, &query);
+        self.filtering_timezones = true;
+        self.controls.filter_timezones(&matches, &query);
+        self.filtering_timezones = false;
     }
 
     fn report_error(&mut self, window: HWND, message: &str) {

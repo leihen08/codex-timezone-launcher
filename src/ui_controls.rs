@@ -7,8 +7,10 @@ use windows_sys::Win32::Graphics::Gdi::{
     COLOR_WINDOW, CreateSolidBrush, DeleteObject, GetSysColorBrush, HBRUSH, HDC, SetBkColor,
     SetBkMode, SetTextColor, TRANSPARENT,
 };
+use windows_sys::Win32::UI::Controls::{COMBOBOXINFO, GetComboBoxInfo};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CB_GETCURSEL, CB_SETCURSEL, GetDlgCtrlID, SendMessageW, SetWindowTextW,
+    CB_ADDSTRING, CB_RESETCONTENT, CB_SETCURSEL, CB_SETEDITSEL, CB_SHOWDROPDOWN, GetDlgCtrlID,
+    GetWindowTextLengthW, GetWindowTextW, SendMessageW, SetWindowTextW,
 };
 
 const COLOR_TEXT: COLORREF = rgb(28, 38, 53);
@@ -25,6 +27,7 @@ pub const STATUS_ERROR: COLORREF = rgb(185, 45, 45);
 pub struct UiControls {
     pub timezone: HWND,
     pub locate: HWND,
+    timezone_edit: HWND,
     status: HWND,
     _fonts: FontSet,
     info_brush: HBRUSH,
@@ -49,6 +52,15 @@ impl UiControls {
             client_text,
             initial_status,
         )?;
+        let mut combo_info = COMBOBOXINFO {
+            cbSize: std::mem::size_of::<COMBOBOXINFO>() as u32,
+            ..Default::default()
+        };
+        if unsafe { GetComboBoxInfo(layout.timezone, &mut combo_info) } == 0
+            || combo_info.hwndItem.is_null()
+        {
+            return Err("无法初始化时区搜索框。".into());
+        }
         let info_brush = unsafe { CreateSolidBrush(COLOR_INFO_BG) };
         let badge_brush = unsafe { CreateSolidBrush(COLOR_BLUE) };
         if info_brush.is_null() || badge_brush.is_null() {
@@ -62,6 +74,7 @@ impl UiControls {
         Ok(Self {
             timezone: layout.timezone,
             locate: layout.locate,
+            timezone_edit: combo_info.hwndItem,
             status: layout.status,
             _fonts: layout.fonts,
             info_brush,
@@ -70,13 +83,44 @@ impl UiControls {
         })
     }
 
-    pub fn selected_index(&self) -> Option<usize> {
-        let index = unsafe { SendMessageW(self.timezone, CB_GETCURSEL, 0, 0) };
-        (index >= 0).then_some(index as usize)
+    pub fn timezone_text(&self) -> Result<String, String> {
+        let length = unsafe { GetWindowTextLengthW(self.timezone_edit) };
+        if !(1..=64).contains(&length) {
+            return Err("请输入或选择一个有效 IANA 时区。".into());
+        }
+        let mut buffer = vec![0u16; length as usize + 1];
+        let copied =
+            unsafe { GetWindowTextW(self.timezone_edit, buffer.as_mut_ptr(), buffer.len() as i32) };
+        if copied <= 0 {
+            Err("无法读取时区输入。".into())
+        } else {
+            Ok(String::from_utf16_lossy(&buffer[..copied as usize]))
+        }
     }
 
-    pub fn select_index(&self, index: usize) {
-        unsafe { SendMessageW(self.timezone, CB_SETCURSEL, index, 0) };
+    pub fn filter_timezones(&self, matches: &[&str], query: &str) {
+        unsafe { SendMessageW(self.timezone, CB_RESETCONTENT, 0, 0) };
+        for timezone in matches {
+            let timezone = wide(timezone);
+            unsafe { SendMessageW(self.timezone, CB_ADDSTRING, 0, timezone.as_ptr() as isize) };
+        }
+        let query_text = wide(query);
+        unsafe { SetWindowTextW(self.timezone_edit, query_text.as_ptr()) };
+        let cursor = query.encode_utf16().count().min(64);
+        let selection = ((cursor as isize) << 16) | cursor as isize;
+        unsafe {
+            SendMessageW(self.timezone, CB_SETEDITSEL, 0, selection);
+            SendMessageW(self.timezone, CB_SHOWDROPDOWN, 1, 0);
+        }
+    }
+
+    pub fn select_timezone(&self, zones: &[String], selected_index: usize) {
+        unsafe { SendMessageW(self.timezone, CB_RESETCONTENT, 0, 0) };
+        for timezone in zones {
+            let timezone = wide(timezone);
+            unsafe { SendMessageW(self.timezone, CB_ADDSTRING, 0, timezone.as_ptr() as isize) };
+        }
+        unsafe { SendMessageW(self.timezone, CB_SETCURSEL, selected_index, 0) };
     }
 
     pub fn set_status(&mut self, text: &str, color: COLORREF) {

@@ -27,3 +27,27 @@ pub fn all_timezones() -> Vec<String> {
     zones.sort_unstable();
     zones
 }
+
+pub fn matching_timezones<'a>(zones: &'a [String], query: &str) -> Vec<&'a str> {
+    let query = query.trim();
+    if query.len() > 64 || query.chars().any(char::is_control) {
+        return Vec::new();
+    }
+    if query.is_empty() {
+        return zones.iter().map(String::as_str).collect();
+    }
+
+    let query = query.to_ascii_lowercase();
+    let mut prefix_matches = Vec::new();
+    let mut inner_matches = Vec::new();
+    for zone in zones {
+        let normalized = zone.to_ascii_lowercase();
+        if normalized.starts_with(&query) {
+            prefix_matches.push(zone.as_str());
+        } else if normalized.contains(&query) {
+            inner_matches.push(zone.as_str());
+        }
+    }
+    prefix_matches.extend(inner_matches);
+    prefix_matches
+}

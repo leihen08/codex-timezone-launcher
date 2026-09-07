@@ -8,9 +8,9 @@ use windows_sys::Win32::System::SystemServices::{
     SS_CENTER, SS_CENTERIMAGE, SS_NOPREFIX, SS_PATHELLIPSIS,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BS_DEFPUSHBUTTON, BS_PUSHBUTTON, CB_ADDSTRING, CB_SETCURSEL, CBS_DROPDOWNLIST, CBS_HASSTRINGS,
-    CreateWindowExW, SendMessageW, WM_SETFONT, WS_BORDER, WS_CHILD, WS_TABSTOP, WS_VISIBLE,
-    WS_VSCROLL,
+    BS_DEFPUSHBUTTON, BS_PUSHBUTTON, CB_ADDSTRING, CB_LIMITTEXT, CB_SETCURSEL, CBS_DROPDOWN,
+    CBS_HASSTRINGS, CreateWindowExW, SendMessageW, WM_SETFONT, WS_BORDER, WS_CHILD, WS_TABSTOP,
+    WS_VISIBLE, WS_VSCROLL,
 };
 
 pub const IDC_TIMEZONE: i32 = 101;
@@ -116,11 +116,12 @@ pub fn create_layout(
             | WS_VISIBLE
             | WS_TABSTOP
             | WS_VSCROLL
-            | CBS_DROPDOWNLIST as u32
+            | CBS_DROPDOWN as u32
             | CBS_HASSTRINGS as u32,
         (150, 192, 418, 280),
         IDC_TIMEZONE,
     )?;
+    unsafe { SendMessageW(timezone, CB_LIMITTEXT, 64, 0) };
     let locate = factory.create(
         "BUTTON",
         "自动定位(&A)",
@@ -130,7 +131,7 @@ pub fn create_layout(
     )?;
     let help = factory.create(
         "STATIC",
-        "支持完整 IANA 时区，例如 Asia/Shanghai、America/New_York。自动定位只访问固定 HTTPS 服务，且不保存 IP。",
+        "可输入 shanghai、new_york 等关键字搜索完整 IANA 时区。自动定位只访问固定 HTTPS 服务，且不保存 IP。",
         WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
         (150, 233, 576, 40),
         IDC_HELP,

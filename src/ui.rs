@@ -13,8 +13,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, IDC_ARROW, IDI_APPLICATION,
     IsDialogMessageW, LoadCursorW, LoadIconW, MB_ICONERROR, MB_OK, MSG, MessageBoxW,
     PostQuitMessage, RegisterClassW, SW_SHOW, SetWindowLongPtrW, ShowWindow, TranslateMessage,
-    WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_NCDESTROY, WNDCLASSW, WS_CAPTION,
-    WS_CLIPCHILDREN, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU,
+    WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_NCDESTROY, WM_TIMER, WNDCLASSW,
+    WS_CAPTION, WS_CLIPCHILDREN, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU,
 };
 
 use crate::ui_app::{AppState, WM_GEO_RESULT};
@@ -157,6 +157,13 @@ unsafe extern "system" fn window_proc(
             let state = unsafe { state_pointer(window) };
             if !state.is_null() {
                 unsafe { (*state).handle_geo_result(window) };
+                return 0;
+            }
+        }
+        WM_TIMER => {
+            let state = unsafe { state_pointer(window) };
+            if !state.is_null() {
+                unsafe { (*state).handle_timer(window, wparam) };
                 return 0;
             }
         }
